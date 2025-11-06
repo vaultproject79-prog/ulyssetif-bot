@@ -1,7 +1,9 @@
 import json
 import os
 import re
+import threading
 from datetime import datetime, timezone
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import List, Dict, Any
 
 import requests  # nécessite: pip install requests
@@ -319,6 +321,28 @@ async def job_check_prices(context: ContextTypes.DEFAULT_TYPE):
 
     save_trades(kept)
     print("✅ Vérification terminée.")
+
+
+# ---------- Mini serveur HTTP pour Render (healthcheck) ----------
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    # On supprime le log HTTP bruyant
+    def log_message(self, format, *args):
+        return
+
+
+def start_health_server():
+    """Petit serveur HTTP juste pour Render, ne renvoie que 'OK'."""
+    port = int(os.environ.get("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    print(f"[health] HTTP server listening on port {port}")
+    server.serve_forever()
 
 
 # ---------- Parsing des calls ----------
@@ -710,6 +734,9 @@ def main():
 
     # ✅ Job de vérification des prix toutes les 60 secondes (1 minute, commence après 10s)
     app.job_queue.run_repeating(job_check_prices, interval=60, first=10)
+
+    # 🧠 On démarre le mini serveur HTTP pour Render dans un thread séparé
+    threading.Thread(target=start_health_server, daemon=True).start()
 
     # Messages du canal d'annonces (uniquement ce canal, et pas les commandes)
     app.add_handler(
